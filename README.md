@@ -35,7 +35,7 @@ A powerful terminal-based todo list manager with workspaces, hierarchical todos,
 #### Method 1: Using the install script (Recommended)
 ```bash
 # Clone the repository
-git clone https://github.com/seawn/paperclip.git
+git clone https://github.com/Smoke516/paperclip.git
 cd paperclip
 
 # Run the installation script
@@ -50,7 +50,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source ~/.zshrc
 
 # Clone and install
-git clone https://github.com/seawn/paperclip.git
+git clone https://github.com/Smoke516/paperclip.git
 cd paperclip
 cargo install --path .
 ```
@@ -65,7 +65,7 @@ cargo install paperclip
 #### Method 1: Using the install script (Recommended)
 ```bash
 # Clone the repository
-git clone https://github.com/seawn/paperclip.git
+git clone https://github.com/Smoke516/paperclip.git
 cd paperclip
 
 # Run the installation script
@@ -84,7 +84,7 @@ sudo apt update
 sudo apt install build-essential
 
 # Clone and install
-git clone https://github.com/seawn/paperclip.git
+git clone https://github.com/Smoke516/paperclip.git
 cd paperclip
 cargo install --path .
 ```
