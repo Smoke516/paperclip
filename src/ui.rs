@@ -18,8 +18,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         return;
     }
     
-    // Check for popup modes
-    if matches!(app.mode, AppMode::TagSelection | AppMode::ContextSelection | AppMode::TemplateSelection | AppMode::RecurrenceSelection | AppMode::WorkspaceSelection) {
+    // Check for workspace selection mode - show only workspace selection UI
+    if matches!(app.mode, AppMode::WorkspaceSelection) {
+        draw_workspace_selection_ui(f, app);
+        return;
+    }
+    
+    // Check for other popup modes
+    if matches!(app.mode, AppMode::TagSelection | AppMode::ContextSelection | AppMode::TemplateSelection | AppMode::RecurrenceSelection) {
         draw_main_ui(f, app);
         draw_selection_popup(f, app);
         return;
@@ -1001,4 +1007,111 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+fn draw_workspace_selection_ui(f: &mut Frame, app: &mut App) {
+    let colors = &app.colors;
+    
+    // Create main layout - just header, main content, and instructions
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Header
+            Constraint::Min(0),    // Main content (workspace selection)
+            Constraint::Length(3), // Instructions
+        ])
+        .split(f.area());
+
+    // Draw header
+    let title = Paragraph::new(" Paperclip - Workspace Selection ")
+        .style(Style::default().fg(colors.fg).bg(Color::Reset))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(colors.magenta))
+        );
+    
+    f.render_widget(title, chunks[0]);
+    
+    // Mode indicator in top right
+    let mode_area = Rect {
+        x: chunks[0].x + chunks[0].width.saturating_sub(12),
+        y: chunks[0].y,
+        width: 12,
+        height: 1,
+    };
+    
+    let mode_widget = Paragraph::new(" WORKSPACE ")
+        .style(Style::default().fg(colors.bg_dark).bg(colors.magenta).add_modifier(Modifier::BOLD))
+        .alignment(Alignment::Center);
+    
+    f.render_widget(mode_widget, mode_area);
+    
+    // Draw workspace list
+    let workspace_items: Vec<ListItem> = app.available_workspaces.iter()
+        .enumerate()
+        .map(|(i, workspace_name)| {
+            let is_selected = i == app.popup_selected;
+            let style = if is_selected {
+                Style::default().fg(colors.fg).bg(colors.bg_highlight).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(colors.fg)
+            };
+            
+            let line = Line::from(vec![
+                Span::styled("  📁 ", Style::default().fg(colors.magenta)),
+                Span::styled(workspace_name, style),
+            ]);
+            
+            ListItem::new(line)
+        })
+        .collect();
+    
+    let workspace_list = List::new(workspace_items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(colors.magenta))
+                .title(" Available Workspaces ")
+                .title_style(Style::default().fg(colors.magenta).add_modifier(Modifier::BOLD))
+        )
+        .style(Style::default().fg(colors.fg));
+    
+    let mut list_state = ratatui::widgets::ListState::default();
+    list_state.select(Some(app.popup_selected));
+    
+    f.render_stateful_widget(workspace_list, chunks[1], &mut list_state);
+    
+    // Draw instructions
+    let instructions = Paragraph::new("Enter: Select Workspace | n: New Workspace | d: Delete | Esc: Exit | j/k: Navigate")
+        .style(Style::default().fg(colors.comment))
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true })
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(colors.dark3))
+                .title(" Instructions ")
+        );
+    
+    f.render_widget(instructions, chunks[2]);
+    
+    // Show message if any
+    if let Some(ref msg) = app.message {
+        let message_area = Rect {
+            x: chunks[2].x + 2,
+            y: chunks[2].y + 1,
+            width: chunks[2].width - 4,
+            height: 1,
+        };
+        
+        let message_widget = Paragraph::new(msg.as_str())
+            .style(Style::default().fg(colors.green).add_modifier(Modifier::BOLD))
+            .alignment(Alignment::Center);
+        
+        f.render_widget(message_widget, message_area);
+    }
 }
