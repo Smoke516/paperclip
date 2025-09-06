@@ -259,9 +259,7 @@ impl Todo {
         self.description = clean_description;
         self.tags = tags;
         self.contexts = contexts;
-        if due_date.is_some() {
-            self.due_date = due_date;
-        }
+        self.due_date = due_date; // Always update due_date, even if None (to clear existing dates)
     }
     
     pub fn has_notes(&self) -> bool {
@@ -328,6 +326,18 @@ impl TodoList {
     }
 
     pub fn remove_todo(&mut self, id: u32) -> Option<Todo> {
+        // First, get the todo to check if it has a parent
+        let todo = self.todos.get(&id);
+        let parent_id = todo.and_then(|t| t.parent_id);
+        
+        // Remove from parent's children list if this todo has a parent
+        if let Some(parent_id) = parent_id {
+            if let Some(parent) = self.todos.get_mut(&parent_id) {
+                parent.children.retain(|&child_id| child_id != id);
+            }
+        }
+        
+        // Remove the todo itself
         self.todos.remove(&id)
     }
 
