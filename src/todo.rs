@@ -129,31 +129,127 @@ impl Todo {
     
     fn parse_due_date(date_str: &str) -> Option<DateTime<Local>> {
         let now = Local::now();
+        let date_lower = date_str.to_lowercase();
         
-        match date_str.to_lowercase().as_str() {
-            "today" => Some(now.date_naive().and_hms_opt(23, 59, 59)?.and_local_timezone(Local).single()?),
-            "tomorrow" => Some((now.date_naive() + chrono::Duration::days(1)).and_hms_opt(23, 59, 59)?.and_local_timezone(Local).single()?),
-            "monday" | "mon" => Some(Self::next_weekday(now, chrono::Weekday::Mon)),
-            "tuesday" | "tue" => Some(Self::next_weekday(now, chrono::Weekday::Tue)),
-            "wednesday" | "wed" => Some(Self::next_weekday(now, chrono::Weekday::Wed)),
-            "thursday" | "thu" => Some(Self::next_weekday(now, chrono::Weekday::Thu)),
-            "friday" | "fri" => Some(Self::next_weekday(now, chrono::Weekday::Fri)),
-            "saturday" | "sat" => Some(Self::next_weekday(now, chrono::Weekday::Sat)),
-            "sunday" | "sun" => Some(Self::next_weekday(now, chrono::Weekday::Sun)),
-            _ => {
-                // Try parsing YYYY-MM-DD format
-                if let Ok(naive_date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-                    naive_date.and_hms_opt(23, 59, 59)?.and_local_timezone(Local).single()
-                } else {
-                    None
+        // Basic relative dates
+        match date_lower.as_str() {
+            "today" => return Some(now.date_naive().and_hms_opt(23, 59, 59)?.and_local_timezone(Local).single()?),
+            "tomorrow" | "tmr" => return Some((now.date_naive() + chrono::Duration::days(1)).and_hms_opt(23, 59, 59)?.and_local_timezone(Local).single()?),
+            "yesterday" => return Some((now.date_naive() - chrono::Duration::days(1)).and_hms_opt(23, 59, 59)?.and_local_timezone(Local).single()?),
+            "monday" | "mon" => return Some(Self::next_weekday(now, chrono::Weekday::Mon)),
+            "tuesday" | "tue" => return Some(Self::next_weekday(now, chrono::Weekday::Tue)),
+            "wednesday" | "wed" => return Some(Self::next_weekday(now, chrono::Weekday::Wed)),
+            "thursday" | "thu" => return Some(Self::next_weekday(now, chrono::Weekday::Thu)),
+            "friday" | "fri" => return Some(Self::next_weekday(now, chrono::Weekday::Fri)),
+            "saturday" | "sat" => return Some(Self::next_weekday(now, chrono::Weekday::Sat)),
+            "sunday" | "sun" => return Some(Self::next_weekday(now, chrono::Weekday::Sun)),
+            "eod" | "endofday" => return Some(now.date_naive().and_hms_opt(23, 59, 59)?.and_local_timezone(Local).single()?),
+            "noon" => return Some(now.date_naive().and_hms_opt(12, 0, 0)?.and_local_timezone(Local).single()?),
+            _ => {}
+        }
+        
+        // Relative date patterns: "in X days", "X days", "in X weeks", etc.
+        if let Some(parsed) = Self::parse_relative_date(&date_lower, now) {
+            return Some(parsed);
+        }
+        
+        // Next/this patterns: "next monday", "this friday"
+        if let Some(parsed) = Self::parse_next_this_pattern(&date_lower, now) {
+            return Some(parsed);
+        }
+        
+        // Various date formats
+        Self::parse_absolute_date(date_str)
+    }
+    
+    fn parse_relative_date(date_str: &str, now: DateTime<Local>) -> Option<DateTime<Local>> {
+        // Pattern: "in 3 days", "3 days", "in 2 weeks", "2 weeks", "in 1 month", "1 month"
+        let re = Regex::new(r"^(?:in\s+)?(\d+)\s+(day|days|week|weeks|month|months|year|years)$").unwrap();
+        
+        if let Some(caps) = re.captures(date_str) {
+            if let (Some(num_str), Some(unit_str)) = (caps.get(1), caps.get(2)) {
+                if let Ok(num) = num_str.as_str().parse::<i64>() {
+                    let duration = match unit_str.as_str() {
+                        "day" | "days" => Duration::days(num),
+                        "week" | "weeks" => Duration::weeks(num),
+                        "month" | "months" => Duration::days(num * 30), // Approximate
+                        "year" | "years" => Duration::days(num * 365), // Approximate
+                        _ => return None,
+                    };
+                    return (now + duration).date_naive().and_hms_opt(23, 59, 59)?.and_local_timezone(Local).single();
                 }
             }
         }
+        
+        None
+    }
+    
+    fn parse_next_this_pattern(date_str: &str, now: DateTime<Local>) -> Option<DateTime<Local>> {
+        let re = Regex::new(r"^(next|this)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)$").unwrap();
+        
+        if let Some(caps) = re.captures(date_str) {
+            if let (Some(modifier), Some(day_str)) = (caps.get(1), caps.get(2)) {
+                let weekday = match day_str.as_str() {
+                    "monday" | "mon" => chrono::Weekday::Mon,
+                    "tuesday" | "tue" => chrono::Weekday::Tue,
+                    "wednesday" | "wed" => chrono::Weekday::Wed,
+                    "thursday" | "thu" => chrono::Weekday::Thu,
+                    "friday" | "fri" => chrono::Weekday::Fri,
+                    "saturday" | "sat" => chrono::Weekday::Sat,
+                    "sunday" | "sun" => chrono::Weekday::Sun,
+                    _ => return None,
+                };
+                
+                return match modifier.as_str() {
+                    "next" => Some(Self::next_weekday(now, weekday)),
+                    "this" => Some(Self::this_weekday(now, weekday)),
+                    _ => None,
+                };
+            }
+        }
+        
+        None
+    }
+    
+    fn parse_absolute_date(date_str: &str) -> Option<DateTime<Local>> {
+        let formats = vec![
+            "%Y-%m-%d",      // 2024-12-25
+            "%m/%d/%Y",      // 12/25/2024
+            "%d/%m/%Y",      // 25/12/2024
+            "%m-%d-%Y",      // 12-25-2024
+            "%d-%m-%Y",      // 25-12-2024
+            "%m/%d",         // 12/25 (assume current year)
+            "%d/%m",         // 25/12 (assume current year)
+            "%b %d",         // Dec 25 (assume current year)
+            "%B %d",         // December 25 (assume current year)
+            "%b %d, %Y",     // Dec 25, 2024
+            "%B %d, %Y",     // December 25, 2024
+        ];
+        
+        for format in formats {
+            if let Ok(naive_date) = NaiveDate::parse_from_str(date_str, format) {
+                return naive_date.and_hms_opt(23, 59, 59)?.and_local_timezone(Local).single();
+            }
+        }
+        
+        None
     }
     
     fn next_weekday(from: DateTime<Local>, target_weekday: chrono::Weekday) -> DateTime<Local> {
         let days_ahead = (target_weekday.number_from_monday() as i32 - from.weekday().number_from_monday() as i32 + 7) % 7;
         let days_ahead = if days_ahead == 0 { 7 } else { days_ahead }; // If it's today, go to next week
+        
+        (from.date_naive() + chrono::Duration::days(days_ahead as i64))
+            .and_hms_opt(23, 59, 59)
+            .unwrap()
+            .and_local_timezone(Local)
+            .single()
+            .unwrap()
+    }
+    
+    fn this_weekday(from: DateTime<Local>, target_weekday: chrono::Weekday) -> DateTime<Local> {
+        let days_ahead = (target_weekday.number_from_monday() as i32 - from.weekday().number_from_monday() as i32 + 7) % 7;
+        // If it's today (days_ahead == 0), use today; otherwise find the day in this week
         
         (from.date_naive() + chrono::Duration::days(days_ahead as i64))
             .and_hms_opt(23, 59, 59)
@@ -814,6 +910,10 @@ impl WorkspaceManager {
         } else {
             None
         }
+    }
+    
+    pub fn get_current_workspace_id(&self) -> Option<String> {
+        self.current_workspace.clone()
     }
     
     pub fn get_current_todo_list(&self) -> Option<&TodoList> {

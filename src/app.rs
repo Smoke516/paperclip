@@ -1,6 +1,73 @@
 use crate::colors::TokyoNightColors;
 use crate::todo::{Todo, TodoList, DueDateFilter, RecurrencePattern, WorkspaceManager};
 use crate::template::TemplateManager;
+use std::collections::VecDeque;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Command {
+    AddTodo { workspace_id: String, todo: Todo },
+    DeleteTodo { workspace_id: String, todo: Todo },
+    CompleteTodo { workspace_id: String, todo_id: u32, old_status: crate::todo::TodoStatus },
+    EditTodo { workspace_id: String, todo_id: u32, old_description: String, old_raw_description: String },
+    ChangePriority { workspace_id: String, todo_id: u32, old_priority: u8 },
+    AddChildTodo { workspace_id: String, parent_id: u32, child_todo: Todo },
+    DeleteWithChildren { workspace_id: String, deleted_todos: Vec<Todo> },
+}
+
+pub struct CommandHistory {
+    undo_stack: VecDeque<Command>,
+    redo_stack: VecDeque<Command>,
+    max_history: usize,
+}
+
+impl CommandHistory {
+    pub fn new() -> Self {
+        Self {
+            undo_stack: VecDeque::new(),
+            redo_stack: VecDeque::new(),
+            max_history: 50, // Store last 50 commands
+        }
+    }
+    
+    pub fn push_command(&mut self, command: Command) {
+        // Clear redo stack when new command is executed
+        self.redo_stack.clear();
+        
+        self.undo_stack.push_back(command);
+        
+        // Limit history size
+        if self.undo_stack.len() > self.max_history {
+            self.undo_stack.pop_front();
+        }
+    }
+    
+    pub fn undo(&mut self) -> Option<Command> {
+        if let Some(command) = self.undo_stack.pop_back() {
+            self.redo_stack.push_back(command.clone());
+            Some(command)
+        } else {
+            None
+        }
+    }
+    
+    pub fn redo(&mut self) -> Option<Command> {
+        if let Some(command) = self.redo_stack.pop_back() {
+            self.undo_stack.push_back(command.clone());
+            Some(command)
+        } else {
+            None
+        }
+    }
+    
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+    
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppMode {
@@ -19,6 +86,9 @@ pub enum AppMode {
     TimeTracking,
     WorkspaceSelection,
     CreateWorkspace,
+    // Bulk operations
+    Visual,
+    BulkOperation,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,6 +100,16 @@ pub enum ViewMode {
     FilterByTag(String),
     FilterByContext(String),
     FilterByDueDate(DueDateFilter),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BulkOperationType {
+    Complete,
+    Delete,
+    SetPriority(u8),
+    AddTag(String),
+    AddContext(String),
+    MoveTo(String), // Move to different workspace
 }
 
 pub struct App {
@@ -60,6 +140,14 @@ pub struct App {
     
     // Workspace management
     pub available_workspaces: Vec<String>, // Workspace IDs for selection
+    
+    // Command history for undo/redo
+    pub command_history: CommandHistory,
+    
+    // Bulk operations
+    pub selected_todos: std::collections::HashSet<u32>,
+    pub visual_start: Option<usize>, // Starting position for visual selection
+    pub bulk_operation: Option<BulkOperationType>,
 }
 
 impl App {
@@ -105,9 +193,152 @@ impl App {
                 RecurrencePattern::Yearly,
             ],
             available_workspaces,
+            command_history: CommandHistory::new(),
+            selected_todos: std::collections::HashSet::new(),
+            visual_start: None,
+            bulk_operation: None,
         }
     }
-
+    
+    // Bulk operations functionality
+    pub fn enter_visual_mode(&mut self) {
+        self.mode = AppMode::Visual;
+        self.visual_start = Some(self.selected);
+        self.selected_todos.clear();
+        // Add current selection to bulk selection
+        if let Some(id) = self.get_selected_todo_id() {
+            self.selected_todos.insert(id);
+        }
+        self.set_message("Visual mode - use j/k to select, Space to toggle, Enter to apply operation".to_string());
+    }
+    
+    pub fn exit_visual_mode(&mut self) {
+        self.mode = AppMode::Normal;
+        self.visual_start = None;
+        self.selected_todos.clear();
+        self.bulk_operation = None;
+    }
+    
+    pub fn toggle_selection_in_visual(&mut self) {
+        if let Some(id) = self.get_selected_todo_id() {
+            if self.selected_todos.contains(&id) {
+                self.selected_todos.remove(&id);
+            } else {
+                self.selected_todos.insert(id);
+            }
+        }
+    }
+    
+    pub fn select_range_in_visual(&mut self) {
+        if let Some(start) = self.visual_start {
+            let end = self.selected;
+            let todos = self.get_visible_todos();
+            
+            let (start_idx, end_idx) = if start <= end {
+                (start, end)
+            } else {
+                (end, start)
+            };
+            
+            // Collect todo IDs first to avoid borrowing issues
+            let mut todo_ids = Vec::new();
+            for i in start_idx..=end_idx.min(todos.len().saturating_sub(1)) {
+                if let Some((todo, _)) = todos.get(i) {
+                    todo_ids.push(todo.id);
+                }
+            }
+            
+            // Clear current selection and add range
+            self.selected_todos.clear();
+            for id in todo_ids {
+                self.selected_todos.insert(id);
+            }
+        }
+    }
+    
+    pub fn bulk_complete_todos(&mut self) {
+        if self.selected_todos.is_empty() {
+            self.set_message("No todos selected for bulk operation".to_string());
+            return;
+        }
+        
+        let mut completed_count = 0;
+        let selected_ids: Vec<u32> = self.selected_todos.iter().cloned().collect();
+        
+        if let Some(todo_list) = self.get_current_todo_list_mut() {
+            for id in selected_ids {
+                if let Some(todo) = todo_list.get_todo_mut(id) {
+                    if !todo.is_completed() {
+                        todo.complete();
+                        completed_count += 1;
+                    }
+                }
+            }
+        }
+        
+        self.set_message(format!("Bulk completed {} todos", completed_count));
+        self.exit_visual_mode();
+    }
+    
+    pub fn bulk_delete_todos(&mut self) {
+        if self.selected_todos.is_empty() {
+            self.set_message("No todos selected for bulk operation".to_string());
+            return;
+        }
+        
+        let mut deleted_todos = Vec::new();
+        let selected_ids: Vec<u32> = self.selected_todos.iter().cloned().collect();
+        
+        if let Some(todo_list) = self.get_current_todo_list_mut() {
+            for id in selected_ids {
+                if let Some(todo) = todo_list.get_todo(id).cloned() {
+                    deleted_todos.push(todo);
+                    todo_list.remove_todo(id);
+                }
+            }
+        }
+        
+        // Record command for undo
+        if !deleted_todos.is_empty() {
+            if let Some(workspace_id) = self.workspace_manager.get_current_workspace_id() {
+                let command = Command::DeleteWithChildren { workspace_id, deleted_todos: deleted_todos.clone() };
+                self.command_history.push_command(command);
+            }
+        }
+        
+        let count = deleted_todos.len();
+        self.set_message(format!("Bulk deleted {} todos. Press 'u' to undo.", count));
+        self.exit_visual_mode();
+        
+        // Adjust selection after deletion
+        let todos = self.get_visible_todos();
+        if self.selected >= todos.len() && todos.len() > 0 {
+            self.selected = todos.len() - 1;
+        }
+    }
+    
+    pub fn bulk_set_priority(&mut self, priority: u8) {
+        if self.selected_todos.is_empty() {
+            self.set_message("No todos selected for bulk operation".to_string());
+            return;
+        }
+        
+        let mut updated_count = 0;
+        let selected_ids: Vec<u32> = self.selected_todos.iter().cloned().collect();
+        
+        if let Some(todo_list) = self.get_current_todo_list_mut() {
+            for id in selected_ids {
+                if let Some(todo) = todo_list.get_todo_mut(id) {
+                    todo.priority = priority;
+                    updated_count += 1;
+                }
+            }
+        }
+        
+        self.set_message(format!("Set priority to {} for {} todos", priority, updated_count));
+        self.exit_visual_mode();
+    }
+    
     pub fn quit(&mut self) {
         self.should_quit = true;
     }
@@ -215,9 +446,22 @@ impl App {
             let input_text = self.input_buffer.trim().to_string();
             match self.mode {
                 AppMode::Insert => {
+                    // Get workspace ID before borrowing todo_list mutably
+                    let workspace_id = self.workspace_manager.get_current_workspace_id();
+                    
                     if let Some(todo_list) = self.get_current_todo_list_mut() {
-                        todo_list.add_todo(input_text);
-                        self.set_message("Todo added!".to_string());
+                        let todo_id = todo_list.add_todo(input_text.clone());
+                        
+                        // Clone the todo for undo command after it's created
+                        let todo_for_undo = todo_list.get_todo(todo_id).cloned();
+                        
+                        self.set_message("Todo added! Press 'u' to undo.".to_string());
+                        
+                        // Record command for undo after releasing the mutable borrow
+                        if let (Some(todo), Some(ws_id)) = (todo_for_undo, workspace_id) {
+                            let command = Command::AddTodo { workspace_id: ws_id, todo };
+                            self.command_history.push_command(command);
+                        }
                     } else {
                         self.set_message("No workspace selected".to_string());
                     }
@@ -243,11 +487,23 @@ impl App {
 
     pub fn toggle_todo_complete(&mut self) {
         if let Some(id) = self.get_selected_todo_id() {
+            let workspace_id = self.workspace_manager.get_current_workspace_id();
+            
             if let Some(todo_list) = self.get_current_todo_list_mut() {
                 if let Some(todo) = todo_list.get_todo_mut(id) {
+                    // Record the old status for undo
+                    let old_status = todo.status.clone();
+                    
                     todo.toggle_complete();
                     let status = if todo.is_completed() { "completed" } else { "pending" };
-                    self.set_message(format!("Todo marked as {}", status));
+                    
+                    // Record command for undo
+                    if let Some(ws_id) = workspace_id {
+                        let command = Command::CompleteTodo { workspace_id: ws_id, todo_id: id, old_status };
+                        self.command_history.push_command(command);
+                    }
+                    
+                    self.set_message(format!("Todo marked as {}. Press 'u' to undo.", status));
                 }
             }
         }
@@ -874,6 +1130,154 @@ impl App {
                 } else {
                     self.set_message("Cannot delete the last remaining workspace".to_string());
                 }
+            }
+        }
+    }
+    
+    // Undo/Redo functionality
+    pub fn undo(&mut self) {
+        if let Some(command) = self.command_history.undo() {
+            self.execute_undo_command(command);
+        } else {
+            self.set_message("Nothing to undo".to_string());
+        }
+    }
+    
+    pub fn redo(&mut self) {
+        if let Some(command) = self.command_history.redo() {
+            self.execute_redo_command(command);
+        } else {
+            self.set_message("Nothing to redo".to_string());
+        }
+    }
+    
+    fn execute_undo_command(&mut self, command: Command) {
+        match command {
+            Command::AddTodo { workspace_id: _workspace_id, todo } => {
+                // Undo add: remove the todo
+                if let Some(todo_list) = self.get_current_todo_list_mut() {
+                    todo_list.remove_todo(todo.id);
+                    self.set_message(format!("Undid: Add todo '{}'", todo.description));
+                }
+            },
+            Command::DeleteTodo { workspace_id: _workspace_id, todo } => {
+                // Undo delete: restore the todo
+                if let Some(todo_list) = self.get_current_todo_list_mut() {
+                    // Restore parent-child relationships if needed
+                    if let Some(parent_id) = todo.parent_id {
+                        if let Some(parent) = todo_list.get_todo_mut(parent_id) {
+                            if !parent.children.contains(&todo.id) {
+                                parent.children.push(todo.id);
+                            }
+                        }
+                    }
+                    todo_list.todos.insert(todo.id, todo.clone());
+                    self.set_message(format!("Undid: Delete todo '{}'", todo.description));
+                }
+            },
+            Command::CompleteTodo { workspace_id: _workspace_id, todo_id, old_status } => {
+                // Undo complete: restore old status
+                if let Some(todo_list) = self.get_current_todo_list_mut() {
+                    if let Some(todo) = todo_list.get_todo_mut(todo_id) {
+                        todo.status = old_status.clone();
+                        if matches!(old_status, crate::todo::TodoStatus::Completed) {
+                            todo.completed_at = Some(chrono::Local::now());
+                        } else {
+                            todo.completed_at = None;
+                        }
+                        self.set_message("Undid: Toggle todo completion".to_string());
+                    }
+                }
+            },
+            Command::EditTodo { workspace_id: _workspace_id, todo_id, old_description, old_raw_description } => {
+                // Undo edit: restore old description
+                if let Some(todo_list) = self.get_current_todo_list_mut() {
+                    if let Some(todo) = todo_list.get_todo_mut(todo_id) {
+                        todo.description = old_description;
+                        todo.raw_description = old_raw_description;
+                        self.set_message("Undid: Edit todo".to_string());
+                    }
+                }
+            },
+            Command::ChangePriority { workspace_id: _workspace_id, todo_id, old_priority } => {
+                // Undo priority change: restore old priority
+                if let Some(todo_list) = self.get_current_todo_list_mut() {
+                    if let Some(todo) = todo_list.get_todo_mut(todo_id) {
+                        todo.priority = old_priority;
+                        self.set_message(format!("Undid: Priority change (restored to {})", old_priority));
+                    }
+                }
+            },
+            Command::AddChildTodo { workspace_id: _workspace_id, parent_id, child_todo } => {
+                // Undo add child: remove the child todo
+                if let Some(todo_list) = self.get_current_todo_list_mut() {
+                    // Remove from parent's children list
+                    if let Some(parent) = todo_list.get_todo_mut(parent_id) {
+                        parent.children.retain(|&id| id != child_todo.id);
+                    }
+                    todo_list.remove_todo(child_todo.id);
+                    self.set_message(format!("Undid: Add child todo '{}'", child_todo.description));
+                }
+            },
+            Command::DeleteWithChildren { workspace_id: _workspace_id, deleted_todos } => {
+                // Undo delete with children: restore all todos
+                if let Some(todo_list) = self.get_current_todo_list_mut() {
+                    // Restore all todos
+                    for todo in &deleted_todos {
+                        todo_list.todos.insert(todo.id, todo.clone());
+                    }
+                    // Restore parent-child relationships
+                    for todo in &deleted_todos {
+                        if let Some(parent_id) = todo.parent_id {
+                            if let Some(parent) = todo_list.get_todo_mut(parent_id) {
+                                if !parent.children.contains(&todo.id) {
+                                    parent.children.push(todo.id);
+                                }
+                            }
+                        }
+                    }
+                    self.set_message(format!("Undid: Delete {} todos with children", deleted_todos.len()));
+                }
+            },
+        }
+    }
+    
+    fn execute_redo_command(&mut self, command: Command) {
+        // Redo is essentially re-executing the original command
+        match command {
+            Command::AddTodo { workspace_id: _workspace_id, todo } => {
+                if let Some(todo_list) = self.get_current_todo_list_mut() {
+                    todo_list.todos.insert(todo.id, todo.clone());
+                    self.set_message(format!("Redid: Add todo '{}'", todo.description));
+                }
+            },
+            Command::DeleteTodo { workspace_id: _workspace_id, todo } => {
+                if let Some(todo_list) = self.get_current_todo_list_mut() {
+                    todo_list.remove_todo(todo.id);
+                    self.set_message(format!("Redid: Delete todo '{}'", todo.description));
+                }
+            },
+            Command::CompleteTodo { workspace_id: _workspace_id, todo_id, old_status: _old_status } => {
+                if let Some(todo_list) = self.get_current_todo_list_mut() {
+                    if let Some(todo) = todo_list.get_todo_mut(todo_id) {
+                        todo.toggle_complete();
+                        let status = if todo.is_completed() { "completed" } else { "pending" };
+                        self.set_message(format!("Redid: Todo marked as {}", status));
+                    }
+                }
+            },
+            Command::ChangePriority { workspace_id: _workspace_id, todo_id, old_priority } => {
+                // For redo, we need to toggle the priority back
+                if let Some(todo_list) = self.get_current_todo_list_mut() {
+                    if let Some(todo) = todo_list.get_todo_mut(todo_id) {
+                        let current_priority = todo.priority;
+                        todo.priority = old_priority;
+                        self.set_message(format!("Redid: Priority change (from {} to {})", current_priority, old_priority));
+                    }
+                }
+            },
+            _ => {
+                self.set_message("Redo operation not fully implemented for this command type".to_string());
             }
         }
     }

@@ -32,6 +32,8 @@ fn handle_key_event(app: &mut App, key_event: KeyEvent) -> io::Result<()> {
         AppMode::ViewNotes => handle_view_notes_mode(app, key_event),
         AppMode::TimeTracking => handle_normal_mode(app, key_event), // For now, same as normal
         AppMode::CreateWorkspace => handle_create_workspace_mode(app, key_event),
+        AppMode::Visual => handle_visual_mode(app, key_event),
+        AppMode::BulkOperation => handle_bulk_operation_mode(app, key_event),
     }
 }
 
@@ -274,6 +276,33 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) -> io::Result<()> {
             ..
         } => {
             app.enter_workspace_selection();
+        }
+        
+        // Undo
+        KeyEvent {
+            code: KeyCode::Char('u'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            app.undo();
+        }
+        
+        // Redo
+        KeyEvent {
+            code: KeyCode::Char('r'),
+            modifiers: KeyModifiers::CONTROL,
+            ..
+        } => {
+            app.redo();
+        }
+        
+        // Visual mode (bulk operations)
+        KeyEvent {
+            code: KeyCode::Char('V'),
+            modifiers: KeyModifiers::SHIFT,
+            ..
+        } => {
+            app.enter_visual_mode();
         }
 
         _ => {}
@@ -586,6 +615,109 @@ fn handle_view_notes_mode(app: &mut App, key_event: KeyEvent) -> io::Result<()> 
             app.mode = AppMode::EditNotes;
         }
 
+        _ => {}
+    }
+
+    Ok(())
+}
+
+fn handle_visual_mode(app: &mut App, key_event: KeyEvent) -> io::Result<()> {
+    match key_event {
+        // Exit visual mode
+        KeyEvent {
+            code: KeyCode::Esc,
+            ..
+        } => {
+            app.exit_visual_mode();
+        }
+        
+        // Navigation in visual mode
+        KeyEvent {
+            code: KeyCode::Char('j'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        }
+        | KeyEvent {
+            code: KeyCode::Down,
+            ..
+        } => {
+            app.move_selection_down();
+            app.select_range_in_visual();
+        }
+
+        KeyEvent {
+            code: KeyCode::Char('k'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        }
+        | KeyEvent {
+            code: KeyCode::Up,
+            ..
+        } => {
+            app.move_selection_up();
+            app.select_range_in_visual();
+        }
+        
+        // Toggle individual selection
+        KeyEvent {
+            code: KeyCode::Char(' '),
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            app.toggle_selection_in_visual();
+        }
+        
+        // Bulk operations
+        KeyEvent {
+            code: KeyCode::Char('c'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            app.bulk_complete_todos();
+        }
+        
+        KeyEvent {
+            code: KeyCode::Char('d'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            app.bulk_delete_todos();
+        }
+        
+        // Priority setting (1-5)
+        KeyEvent {
+            code: KeyCode::Char(c @ '1'..='5'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            let priority = (c as u8) - b'0';
+            app.bulk_set_priority(priority);
+        }
+        
+        KeyEvent {
+            code: KeyCode::Char('0'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            app.bulk_set_priority(0);
+        }
+        
+        _ => {}
+    }
+
+    Ok(())
+}
+
+fn handle_bulk_operation_mode(app: &mut App, key_event: KeyEvent) -> io::Result<()> {
+    match key_event {
+        // Exit bulk operation mode
+        KeyEvent {
+            code: KeyCode::Esc,
+            ..
+        } => {
+            app.exit_visual_mode();
+        }
+        
         _ => {}
     }
 

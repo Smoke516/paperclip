@@ -106,6 +106,8 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
         AppMode::TimeTracking => ("TIMER", colors.green),
         AppMode::WorkspaceSelection => ("WORKSPACE", colors.magenta),
         AppMode::CreateWorkspace => ("NEW WORKSPACE", colors.green),
+        AppMode::Visual => ("VISUAL", colors.purple),
+        AppMode::BulkOperation => ("BULK OP", colors.red),
     };
     
     // Get current workspace name
