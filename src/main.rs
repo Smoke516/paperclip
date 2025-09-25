@@ -40,20 +40,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .iter()
                 .map(|ws| ws.name.clone())
                 .collect();
+                
+            // Always show welcome screen on startup
+            app.mode = app::AppMode::Welcome;
             
-            // Count total todos across all workspaces
-            let total_todos: usize = app.workspace_manager.workspace_todos.values()
-                .map(|todo_list| todo_list.total_count())
-                .sum();
-            if total_todos > 0 {
-                app.set_message(format!("Loaded {} todos across {} workspaces. Select a workspace to continue.", 
-                    total_todos, app.workspace_manager.workspaces.len()));
+            // Set first launch status based on existing data for welcome message
+            let is_first_launch = app.available_workspaces.len() <= 1 && 
+                app.workspace_manager.workspace_todos.values()
+                    .map(|todo_list| todo_list.total_count())
+                    .sum::<usize>() == 0;
+            
+            app.is_first_launch = is_first_launch;
+            
+            if is_first_launch {
+                app.set_message("Welcome to Paperclip! Choose an option below to get started.".to_string());
             } else {
-                app.set_message("Select a workspace to get started".to_string());
+                // Count total todos for welcome message
+                let total_todos: usize = app.workspace_manager.workspace_todos.values()
+                    .map(|todo_list| todo_list.total_count())
+                    .sum();
+                if total_todos > 0 {
+                    app.set_message(format!("Welcome back! You have {} todos across {} workspaces.", 
+                        total_todos, app.workspace_manager.workspaces.len()));
+                } else {
+                    app.set_message("Welcome back! Ready to organize your todos?".to_string());
+                }
             }
         }
-        Err(e) => {
-            app.set_message(format!("Failed to load workspaces: {}", e));
+        Err(_e) => {
+            // No existing data found - this is definitely a first launch
+            app.mode = app::AppMode::Welcome;
+            app.is_first_launch = true;
+            app.set_message("Welcome to Paperclip! Choose an option below to get started.".to_string());
         }
     }
 

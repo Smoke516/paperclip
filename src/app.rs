@@ -71,6 +71,7 @@ impl CommandHistory {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppMode {
+    Welcome,
     Normal,
     Insert,
     InsertChild,
@@ -119,6 +120,7 @@ pub struct App {
     pub selected: usize,
     pub input_buffer: String,
     pub search_buffer: String,
+    pub search_cursor_pos: usize, // Cursor position in search buffer
     pub colors: TokyoNightColors,
     pub should_quit: bool,
     pub show_help: bool,
@@ -132,9 +134,12 @@ pub struct App {
     // Advanced features
     pub template_manager: TemplateManager,
     pub notes_buffer: String, // For editing notes
+    pub notes_cursor_pos: usize, // Cursor position in notes buffer
     pub editing_notes_for: Option<u32>, // Which todo's notes we're editing
     pub edit_buffer: String, // For editing todo descriptions
+    pub edit_cursor_pos: usize, // Cursor position in edit buffer
     pub editing_todo_id: Option<u32>, // Which todo's description we're editing
+    pub input_cursor_pos: usize, // Cursor position in input buffer
     pub available_templates: Vec<String>, // Template IDs for selection
     pub available_recurrence: Vec<RecurrencePattern>, // For recurrence selection
     
@@ -148,6 +153,10 @@ pub struct App {
     pub selected_todos: std::collections::HashSet<u32>,
     pub visual_start: Option<usize>, // Starting position for visual selection
     pub bulk_operation: Option<BulkOperationType>,
+    
+    // Welcome screen
+    pub welcome_selected: usize, // Selected option on welcome screen
+    pub is_first_launch: bool, // Track if this is the first time using the app
 }
 
 impl App {
@@ -157,18 +166,22 @@ impl App {
         workspace_manager.create_workspace("Personal".to_string(), Some("Your personal todos".to_string()));
         
         // Get available workspace names for initial selection
-        let available_workspaces = workspace_manager.get_all_workspaces()
+        let available_workspaces: Vec<String> = workspace_manager.get_all_workspaces()
             .iter()
             .map(|ws| ws.name.clone())
             .collect();
         
+        // Check if this is first launch (no workspaces beyond default means first time)
+        let is_first_launch = available_workspaces.len() <= 1;
+        
         Self {
             workspace_manager,
-            mode: AppMode::WorkspaceSelection,
+            mode: if is_first_launch { AppMode::Welcome } else { AppMode::WorkspaceSelection },
             view_mode: ViewMode::All,
             selected: 0,
             input_buffer: String::new(),
             search_buffer: String::new(),
+            search_cursor_pos: 0,
             colors: TokyoNightColors::new(),
             should_quit: false,
             show_help: false,
@@ -181,9 +194,12 @@ impl App {
             // Initialize advanced features
             template_manager: TemplateManager::with_builtin_templates(),
             notes_buffer: String::new(),
+            notes_cursor_pos: 0,
             editing_notes_for: None,
             edit_buffer: String::new(),
+            edit_cursor_pos: 0,
             editing_todo_id: None,
+            input_cursor_pos: 0,
             available_templates: Vec::new(),
             available_recurrence: vec![
                 RecurrencePattern::None,
@@ -197,6 +213,8 @@ impl App {
             selected_todos: std::collections::HashSet::new(),
             visual_start: None,
             bulk_operation: None,
+            welcome_selected: 0,
+            is_first_launch,
         }
     }
     
@@ -424,21 +442,13 @@ impl App {
 
     pub fn enter_insert_mode(&mut self) {
         self.mode = AppMode::Insert;
-        self.input_buffer.clear();
+        self.clear_input_buffer();
     }
 
     pub fn enter_normal_mode(&mut self) {
         self.mode = AppMode::Normal;
-        self.input_buffer.clear();
+        self.clear_input_buffer();
         self.inserting_child_for = None;
-    }
-
-    pub fn add_char_to_input(&mut self, c: char) {
-        self.input_buffer.push(c);
-    }
-
-    pub fn remove_char_from_input(&mut self) {
-        self.input_buffer.pop();
     }
 
     pub fn submit_input(&mut self) {
@@ -587,7 +597,7 @@ impl App {
     pub fn add_child_todo(&mut self) {
         if let Some(parent_id) = self.get_selected_todo_id() {
             self.mode = AppMode::InsertChild;
-            self.input_buffer.clear();
+            self.clear_input_buffer();
             self.inserting_child_for = Some(parent_id);
         }
     }
@@ -629,6 +639,7 @@ impl App {
     pub fn enter_search_mode(&mut self) {
         self.mode = AppMode::Search;
         self.search_buffer.clear();
+        self.search_cursor_pos = 0;
     }
 
     pub fn submit_search(&mut self) {
@@ -641,14 +652,46 @@ impl App {
         self.mode = AppMode::Normal;
         self.set_message(format!("Searching for: {}", self.search_buffer));
         self.search_buffer.clear();
+        self.search_cursor_pos = 0;
     }
 
     pub fn add_char_to_search(&mut self, c: char) {
-        self.search_buffer.push(c);
+        self.search_buffer.insert(self.search_cursor_pos, c);
+        self.search_cursor_pos += c.len_utf8();
     }
 
     pub fn remove_char_from_search(&mut self) {
-        self.search_buffer.pop();
+        if self.search_cursor_pos > 0 {
+            // Find the start of the character to remove (handle UTF-8)
+            let mut char_start = self.search_cursor_pos - 1;
+            while char_start > 0 && !self.search_buffer.is_char_boundary(char_start) {
+                char_start -= 1;
+            }
+            
+            self.search_buffer.remove(char_start);
+            self.search_cursor_pos = char_start;
+        }
+    }
+    
+    // Search cursor navigation
+    pub fn move_search_cursor_left(&mut self) {
+        if self.search_cursor_pos > 0 {
+            self.search_cursor_pos -= 1;
+            // Ensure we're at a valid character boundary
+            while self.search_cursor_pos > 0 && !self.search_buffer.is_char_boundary(self.search_cursor_pos) {
+                self.search_cursor_pos -= 1;
+            }
+        }
+    }
+    
+    pub fn move_search_cursor_right(&mut self) {
+        if self.search_cursor_pos < self.search_buffer.len() {
+            self.search_cursor_pos += 1;
+            // Ensure we're at a valid character boundary
+            while self.search_cursor_pos < self.search_buffer.len() && !self.search_buffer.is_char_boundary(self.search_cursor_pos) {
+                self.search_cursor_pos += 1;
+            }
+        }
     }
 
     pub fn clear_filters(&mut self) {
@@ -697,7 +740,7 @@ impl App {
             AppMode::ContextSelection => self.available_contexts.len(),
             AppMode::TemplateSelection => self.available_templates.len(),
             AppMode::RecurrenceSelection => self.available_recurrence.len(),
-            AppMode::WorkspaceSelection => self.available_workspaces.len(),
+            AppMode::WorkspaceSelection => self.available_workspaces.len() + 1, // +1 for Home option
             _ => 0,
         };
         if self.popup_selected < max_items.saturating_sub(1) {
@@ -794,11 +837,14 @@ impl App {
             if let Some(todo_list) = self.get_current_todo_list() {
                 if let Some(todo) = todo_list.get_todo(id) {
                     self.notes_buffer = todo.notes.clone().unwrap_or_default();
+                    self.notes_cursor_pos = self.notes_buffer.len();
                 } else {
                     self.notes_buffer.clear();
+                    self.notes_cursor_pos = 0;
                 }
             } else {
                 self.notes_buffer.clear();
+                self.notes_cursor_pos = 0;
             }
         }
     }
@@ -824,6 +870,7 @@ impl App {
     pub fn exit_notes_mode(&mut self) {
         self.mode = AppMode::Normal;
         self.notes_buffer.clear();
+        self.notes_cursor_pos = 0;
         self.editing_notes_for = None;
     }
     
@@ -853,11 +900,28 @@ impl App {
     }
     
     pub fn add_char_to_notes(&mut self, c: char) {
-        self.notes_buffer.push(c);
+        if c == '\n' || c.is_control() {
+            // Handle newlines and control characters at cursor position
+            self.notes_buffer.insert(self.notes_cursor_pos, c);
+            self.notes_cursor_pos += c.len_utf8();
+        } else {
+            // Insert regular characters at cursor position
+            self.notes_buffer.insert(self.notes_cursor_pos, c);
+            self.notes_cursor_pos += c.len_utf8();
+        }
     }
     
     pub fn remove_char_from_notes(&mut self) {
-        self.notes_buffer.pop();
+        if self.notes_cursor_pos > 0 {
+            // Find the start of the character to remove (handle UTF-8)
+            let mut char_start = self.notes_cursor_pos - 1;
+            while char_start > 0 && !self.notes_buffer.is_char_boundary(char_start) {
+                char_start -= 1;
+            }
+            
+            self.notes_buffer.remove(char_start);
+            self.notes_cursor_pos = char_start;
+        }
     }
     
     // Todo description editing
@@ -870,11 +934,14 @@ impl App {
             if let Some(todo_list) = self.get_current_todo_list() {
                 if let Some(todo) = todo_list.get_todo(id) {
                     self.edit_buffer = todo.raw_description.clone();
+                    self.edit_cursor_pos = self.edit_buffer.len();
                 } else {
                     self.edit_buffer.clear();
+                    self.edit_cursor_pos = 0;
                 }
             } else {
                 self.edit_buffer.clear();
+                self.edit_cursor_pos = 0;
             }
         }
     }
@@ -903,15 +970,248 @@ impl App {
     pub fn exit_edit_mode(&mut self) {
         self.mode = AppMode::Normal;
         self.edit_buffer.clear();
+        self.edit_cursor_pos = 0;
         self.editing_todo_id = None;
     }
     
     pub fn add_char_to_edit(&mut self, c: char) {
-        self.edit_buffer.push(c);
+        self.edit_buffer.insert(self.edit_cursor_pos, c);
+        self.edit_cursor_pos += c.len_utf8();
     }
     
     pub fn remove_char_from_edit(&mut self) {
-        self.edit_buffer.pop();
+        if self.edit_cursor_pos > 0 {
+            // Find the start of the character to remove (handle UTF-8)
+            let mut char_start = self.edit_cursor_pos - 1;
+            while char_start > 0 && !self.edit_buffer.is_char_boundary(char_start) {
+                char_start -= 1;
+            }
+            
+            self.edit_buffer.remove(char_start);
+            self.edit_cursor_pos = char_start;
+        }
+    }
+    
+    // Input buffer character manipulation
+    pub fn add_char_to_input(&mut self, c: char) {
+        self.input_buffer.insert(self.input_cursor_pos, c);
+        self.input_cursor_pos += c.len_utf8();
+    }
+    
+    pub fn remove_char_from_input(&mut self) {
+        if self.input_cursor_pos > 0 {
+            // Find the start of the character to remove (handle UTF-8)
+            let mut char_start = self.input_cursor_pos - 1;
+            while char_start > 0 && !self.input_buffer.is_char_boundary(char_start) {
+                char_start -= 1;
+            }
+            
+            self.input_buffer.remove(char_start);
+            self.input_cursor_pos = char_start;
+        }
+    }
+    
+    // Cursor navigation for notes
+    pub fn move_notes_cursor_left(&mut self) {
+        if self.notes_cursor_pos > 0 {
+            self.notes_cursor_pos -= 1;
+            // Ensure we're at a valid character boundary
+            while self.notes_cursor_pos > 0 && !self.notes_buffer.is_char_boundary(self.notes_cursor_pos) {
+                self.notes_cursor_pos -= 1;
+            }
+        }
+    }
+    
+    pub fn move_notes_cursor_right(&mut self) {
+        if self.notes_cursor_pos < self.notes_buffer.len() {
+            self.notes_cursor_pos += 1;
+            // Ensure we're at a valid character boundary
+            while self.notes_cursor_pos < self.notes_buffer.len() && !self.notes_buffer.is_char_boundary(self.notes_cursor_pos) {
+                self.notes_cursor_pos += 1;
+            }
+        }
+    }
+    
+    // Cursor navigation for edit buffer
+    pub fn move_edit_cursor_left(&mut self) {
+        if self.edit_cursor_pos > 0 {
+            self.edit_cursor_pos -= 1;
+            // Ensure we're at a valid character boundary
+            while self.edit_cursor_pos > 0 && !self.edit_buffer.is_char_boundary(self.edit_cursor_pos) {
+                self.edit_cursor_pos -= 1;
+            }
+        }
+    }
+    
+    pub fn move_edit_cursor_right(&mut self) {
+        if self.edit_cursor_pos < self.edit_buffer.len() {
+            self.edit_cursor_pos += 1;
+            // Ensure we're at a valid character boundary
+            while self.edit_cursor_pos < self.edit_buffer.len() && !self.edit_buffer.is_char_boundary(self.edit_cursor_pos) {
+                self.edit_cursor_pos += 1;
+            }
+        }
+    }
+    
+    // Cursor navigation for input buffer
+    pub fn move_input_cursor_left(&mut self) {
+        if self.input_cursor_pos > 0 {
+            self.input_cursor_pos -= 1;
+            // Ensure we're at a valid character boundary
+            while self.input_cursor_pos > 0 && !self.input_buffer.is_char_boundary(self.input_cursor_pos) {
+                self.input_cursor_pos -= 1;
+            }
+        }
+    }
+    
+    pub fn move_input_cursor_right(&mut self) {
+        if self.input_cursor_pos < self.input_buffer.len() {
+            self.input_cursor_pos += 1;
+            // Ensure we're at a valid character boundary
+            while self.input_cursor_pos < self.input_buffer.len() && !self.input_buffer.is_char_boundary(self.input_cursor_pos) {
+                self.input_cursor_pos += 1;
+            }
+        }
+    }
+    
+    // Clear input buffer and reset cursor
+    pub fn clear_input_buffer(&mut self) {
+        self.input_buffer.clear();
+        self.input_cursor_pos = 0;
+    }
+    
+    // Welcome screen methods
+    pub fn get_welcome_options(&self) -> Vec<(&str, &str)> {
+        if self.is_first_launch {
+            // First time user options
+            vec![
+                ("🚀 Get Started", "Create your first todo and jump right in"),
+                ("📂 Browse Workspaces", "Explore existing workspaces or create new ones"),
+                ("❓ Learn the Basics", "View help and keyboard shortcuts"),
+                ("⚡ Quick Demo", "See Paperclip in action with sample todos"),
+                ("❌ Exit", "Close Paperclip"),
+            ]
+        } else {
+            // Returning user options  
+            vec![
+                ("📂 Browse Workspaces", "Select from your existing workspaces"),
+                ("❓ Learn the Basics", "View help and keyboard shortcuts"),
+                ("⚡ Quick Demo", "See Paperclip in action with sample todos"),
+                ("🆕 Create New Workspace", "Start fresh with a new workspace"),
+                ("❌ Exit", "Close Paperclip"),
+            ]
+        }
+    }
+    
+    pub fn move_welcome_selection_up(&mut self) {
+        if self.welcome_selected > 0 {
+            self.welcome_selected -= 1;
+        }
+    }
+    
+    pub fn move_welcome_selection_down(&mut self) {
+        let max_options = self.get_welcome_options().len();
+        if self.welcome_selected < max_options.saturating_sub(1) {
+            self.welcome_selected += 1;
+        }
+    }
+    
+    pub fn select_welcome_option(&mut self) {
+        if self.is_first_launch {
+            // First time user options: Get Started | Browse Workspaces | Learn | Demo | Exit
+            match self.welcome_selected {
+                0 => {
+                    // Get Started - create Personal workspace and go to insert mode
+                    self.workspace_manager.switch_workspace_by_name("Personal");
+                    self.mode = AppMode::Insert;
+                    self.clear_input_buffer();
+                    self.set_message("Welcome! Type your first todo and press Enter".to_string());
+                }
+                1 => {
+                    // Browse Workspaces
+                    self.enter_workspace_selection();
+                }
+                2 => {
+                    // Learn the Basics
+                    self.show_help = true;
+                    self.set_message("Press ? again to close help".to_string());
+                }
+                3 => {
+                    // Quick Demo
+                    self.create_demo_todos();
+                    self.workspace_manager.switch_workspace_by_name("Personal");
+                    self.mode = AppMode::Normal;
+                    self.set_message("Welcome! Try navigating with j/k, press Space to complete todos".to_string());
+                }
+                4 => {
+                    // Exit
+                    self.should_quit = true;
+                }
+                _ => {}
+            }
+        } else {
+            // Returning user options: Browse Workspaces | Learn | Demo | Create New | Exit
+            match self.welcome_selected {
+                0 => {
+                    // Browse Workspaces
+                    self.enter_workspace_selection();
+                }
+                1 => {
+                    // Learn the Basics
+                    self.show_help = true;
+                    self.set_message("Press ? again to close help".to_string());
+                }
+                2 => {
+                    // Quick Demo
+                    self.create_demo_todos();
+                    self.workspace_manager.switch_workspace_by_name("Personal");
+                    self.mode = AppMode::Normal;
+                    self.set_message("Welcome! Try navigating with j/k, press Space to complete todos".to_string());
+                }
+                3 => {
+                    // Create New Workspace
+                    self.enter_create_workspace_mode();
+                }
+                4 => {
+                    // Exit
+                    self.should_quit = true;
+                }
+                _ => {}
+            }
+        }
+    }
+    
+    // Return to welcome screen from any mode
+    pub fn return_to_welcome(&mut self) {
+        self.mode = AppMode::Welcome;
+        self.welcome_selected = 0;
+        self.selected = 0;
+        self.clear_input_buffer();
+        self.set_message("Returned to welcome screen - Choose an option to continue".to_string());
+    }
+    
+    fn create_demo_todos(&mut self) {
+        if let Some(todo_list) = self.get_current_todo_list_mut() {
+            // Clear existing todos in Personal workspace for demo
+            todo_list.todos.clear();
+            
+            // Add demo todos
+            let demo_todos = vec![
+                "Welcome to Paperclip! #getting-started @demo due:today",
+                "Try pressing Space to mark this todo complete ○ #tutorial",
+                "Press 'a' on this todo to add a child task ○ #tutorial",
+                "Use j/k or arrow keys to navigate ○ #navigation",
+                "Press 'i' to add a new todo ○ #basics",
+                "Press 'n' to add notes to a todo ○ #features",
+                "Try searching with '/' key ○ #search",
+                "Filter by tags with '#' key #important @work due:tomorrow",
+                "Press '?' for help anytime ○ #help",
+            ];
+            
+            for todo_text in demo_todos {
+                todo_list.add_todo(todo_text.to_string());
+            }
+        }
     }
     
     // Template management
@@ -1010,16 +1310,23 @@ impl App {
     }
     
     pub fn switch_workspace(&mut self) {
-        if let Some(workspace_name) = self.available_workspaces.get(self.popup_selected) {
-            if self.workspace_manager.switch_workspace_by_name(workspace_name) {
-                self.set_message(format!("Switched to workspace: {}", workspace_name));
-                self.selected = 0; // Reset selection when switching workspaces
-                self.view_mode = ViewMode::All; // Reset view mode
-            } else {
-                self.set_message("Failed to switch workspace".to_string());
+        if self.popup_selected == 0 {
+            // Home option selected - return to welcome screen
+            self.return_to_welcome();
+        } else {
+            // Regular workspace selection (subtract 1 to account for Home option)
+            let workspace_index = self.popup_selected - 1;
+            if let Some(workspace_name) = self.available_workspaces.get(workspace_index) {
+                if self.workspace_manager.switch_workspace_by_name(workspace_name) {
+                    self.set_message(format!("Switched to workspace: {}", workspace_name));
+                    self.selected = 0; // Reset selection when switching workspaces
+                    self.view_mode = ViewMode::All; // Reset view mode
+                    self.mode = AppMode::Normal;
+                } else {
+                    self.set_message("Failed to switch workspace".to_string());
+                }
             }
         }
-        self.mode = AppMode::Normal;
         self.available_workspaces.clear();
     }
     
@@ -1102,7 +1409,15 @@ impl App {
     }
     
     pub fn delete_selected_workspace(&mut self) {
-        if let Some(workspace_name) = self.available_workspaces.get(self.popup_selected) {
+        if self.popup_selected == 0 {
+            // Can't delete the Home option
+            self.set_message("Cannot delete the Home option".to_string());
+            return;
+        }
+        
+        // Adjust index to account for Home option
+        let workspace_index = self.popup_selected - 1;
+        if let Some(workspace_name) = self.available_workspaces.get(workspace_index) {
             // Find workspace ID by name
             if let Some((workspace_id, _)) = self.workspace_manager.workspaces.iter().find(|(_, ws)| ws.name == *workspace_name) {
                 let workspace_id = workspace_id.clone();

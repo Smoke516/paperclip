@@ -22,19 +22,21 @@ fn handle_key_event(app: &mut App, key_event: KeyEvent) -> io::Result<()> {
     }
 
     match app.mode {
-        AppMode::Normal => handle_normal_mode(app, key_event),
-        AppMode::Insert => handle_insert_mode(app, key_event),
-        AppMode::InsertChild => handle_insert_mode(app, key_event), // Same as insert mode
-        AppMode::EditTodo => handle_edit_mode(app, key_event),
-        AppMode::Search => handle_search_mode(app, key_event),
-        AppMode::TagSelection | AppMode::ContextSelection | AppMode::TemplateSelection | AppMode::RecurrenceSelection | AppMode::WorkspaceSelection => handle_popup_mode(app, key_event),
-        AppMode::EditNotes => handle_notes_mode(app, key_event),
-        AppMode::ViewNotes => handle_view_notes_mode(app, key_event),
-        AppMode::TimeTracking => handle_normal_mode(app, key_event), // For now, same as normal
-        AppMode::CreateWorkspace => handle_create_workspace_mode(app, key_event),
-        AppMode::Visual => handle_visual_mode(app, key_event),
-        AppMode::BulkOperation => handle_bulk_operation_mode(app, key_event),
+        AppMode::Welcome => handle_welcome_mode(app, key_event)?,
+        AppMode::Normal => handle_normal_mode(app, key_event)?,
+        AppMode::Insert | AppMode::InsertChild => handle_insert_mode(app, key_event)?,
+        AppMode::EditTodo => handle_edit_mode(app, key_event)?,
+        AppMode::Search => handle_search_mode(app, key_event)?,
+        AppMode::TagSelection | AppMode::ContextSelection | AppMode::TemplateSelection | AppMode::RecurrenceSelection | AppMode::WorkspaceSelection => handle_popup_mode(app, key_event)?,
+        AppMode::EditNotes => handle_notes_mode(app, key_event)?,
+        AppMode::ViewNotes => handle_view_notes_mode(app, key_event)?,
+        AppMode::TimeTracking => handle_normal_mode(app, key_event)?, // For now, same as normal
+        AppMode::CreateWorkspace => handle_create_workspace_mode(app, key_event)?,
+        AppMode::Visual => handle_visual_mode(app, key_event)?,
+        AppMode::BulkOperation => handle_bulk_operation_mode(app, key_event)?,
     }
+    
+    Ok(())
 }
 
 fn handle_normal_mode(app: &mut App, key_event: KeyEvent) -> io::Result<()> {
@@ -278,6 +280,15 @@ fn handle_normal_mode(app: &mut App, key_event: KeyEvent) -> io::Result<()> {
             app.enter_workspace_selection();
         }
         
+        // Return to welcome screen
+        KeyEvent {
+            code: KeyCode::Char('h'),
+            modifiers: KeyModifiers::CONTROL,
+            ..
+        } => {
+            app.return_to_welcome();
+        }
+        
         // Undo
         KeyEvent {
             code: KeyCode::Char('u'),
@@ -335,6 +346,22 @@ fn handle_insert_mode(app: &mut App, key_event: KeyEvent) -> io::Result<()> {
             ..
         } => {
             app.remove_char_from_input();
+        }
+
+        // Cursor navigation - left arrow
+        KeyEvent {
+            code: KeyCode::Left,
+            ..
+        } => {
+            app.move_input_cursor_left();
+        }
+        
+        // Cursor navigation - right arrow
+        KeyEvent {
+            code: KeyCode::Right,
+            ..
+        } => {
+            app.move_input_cursor_right();
         }
 
         // Character input
@@ -455,6 +482,22 @@ fn handle_search_mode(app: &mut App, key_event: KeyEvent) -> io::Result<()> {
             app.remove_char_from_search();
         }
 
+        // Cursor navigation - left arrow
+        KeyEvent {
+            code: KeyCode::Left,
+            ..
+        } => {
+            app.move_search_cursor_left();
+        }
+        
+        // Cursor navigation - right arrow
+        KeyEvent {
+            code: KeyCode::Right,
+            ..
+        } => {
+            app.move_search_cursor_right();
+        }
+
         // Character input
         KeyEvent {
             code: KeyCode::Char(c),
@@ -500,6 +543,22 @@ fn handle_edit_mode(app: &mut App, key_event: KeyEvent) -> io::Result<()> {
             ..
         } => {
             app.remove_char_from_edit();
+        }
+
+        // Cursor navigation - left arrow
+        KeyEvent {
+            code: KeyCode::Left,
+            ..
+        } => {
+            app.move_edit_cursor_left();
+        }
+        
+        // Cursor navigation - right arrow
+        KeyEvent {
+            code: KeyCode::Right,
+            ..
+        } => {
+            app.move_edit_cursor_right();
         }
 
         // Character input
@@ -573,6 +632,22 @@ fn handle_notes_mode(app: &mut App, key_event: KeyEvent) -> io::Result<()> {
             ..
         } => {
             app.add_char_to_notes('\n');
+        }
+
+        // Cursor navigation - left arrow
+        KeyEvent {
+            code: KeyCode::Left,
+            ..
+        } => {
+            app.move_notes_cursor_left();
+        }
+        
+        // Cursor navigation - right arrow
+        KeyEvent {
+            code: KeyCode::Right,
+            ..
+        } => {
+            app.move_notes_cursor_right();
         }
 
         // Character input
@@ -718,6 +793,116 @@ fn handle_bulk_operation_mode(app: &mut App, key_event: KeyEvent) -> io::Result<
             app.exit_visual_mode();
         }
         
+        _ => {}
+    }
+
+    Ok(())
+}
+
+fn handle_welcome_mode(app: &mut App, key_event: KeyEvent) -> io::Result<()> {
+    match key_event {
+        // Navigation - move up
+        KeyEvent {
+            code: KeyCode::Char('k'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        }
+        | KeyEvent {
+            code: KeyCode::Up,
+            ..
+        } => {
+            app.move_welcome_selection_up();
+        }
+
+        // Navigation - move down
+        KeyEvent {
+            code: KeyCode::Char('j'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        }
+        | KeyEvent {
+            code: KeyCode::Down,
+            ..
+        } => {
+            app.move_welcome_selection_down();
+        }
+
+        // Select option
+        KeyEvent {
+            code: KeyCode::Enter,
+            ..
+        } => {
+            app.select_welcome_option();
+        }
+
+        // Show help
+        KeyEvent {
+            code: KeyCode::Char('?'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            app.toggle_help();
+        }
+
+        // Quick shortcuts for common actions
+        KeyEvent {
+            code: KeyCode::Char('1'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            // Quick shortcut for "Get Started"
+            app.welcome_selected = 0;
+            app.select_welcome_option();
+        }
+
+        KeyEvent {
+            code: KeyCode::Char('2'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            // Quick shortcut for "Browse Workspaces"
+            app.welcome_selected = 1;
+            app.select_welcome_option();
+        }
+
+        KeyEvent {
+            code: KeyCode::Char('3'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            // Quick shortcut for "Learn the Basics"
+            app.welcome_selected = 2;
+            app.select_welcome_option();
+        }
+
+        KeyEvent {
+            code: KeyCode::Char('4'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            // Quick shortcut for "Quick Demo"
+            app.welcome_selected = 3;
+            app.select_welcome_option();
+        }
+
+        // Quit
+        KeyEvent {
+            code: KeyCode::Char('q'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        }
+        | KeyEvent {
+            code: KeyCode::Char('c'),
+            modifiers: KeyModifiers::CONTROL,
+            ..
+        }
+        | KeyEvent {
+            code: KeyCode::Esc,
+            ..
+        } => {
+            app.quit();
+        }
+
         _ => {}
     }
 

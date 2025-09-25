@@ -18,6 +18,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         return;
     }
     
+    // Check for welcome screen mode
+    if matches!(app.mode, AppMode::Welcome) {
+        draw_welcome_screen(f, app);
+        return;
+    }
+    
     // Check for workspace selection mode - show only workspace selection UI
     if matches!(app.mode, AppMode::WorkspaceSelection) {
         draw_workspace_selection_ui(f, app);
@@ -98,6 +104,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
     };
     
     let mode_indicator = match app.mode {
+        AppMode::Welcome => ("WELCOME", colors.cyan),
         AppMode::Normal => ("NORMAL", colors.blue),
         AppMode::Insert => ("INSERT", colors.green),
         AppMode::InsertChild => ("ADD CHILD", colors.orange),
@@ -344,7 +351,7 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
     let status_text = if let Some(msg) = &app.message {
         msg.clone()
     } else {
-        format!("Total: {} | Pending: {} | Completed: {} | Press '?' for help", 
+        format!("Total: {} | Pending: {} | Completed: {} | w: Workspaces | Ctrl+H: Home | ?: Help", 
                 total_count, pending_count, completed_count)
     };
     
@@ -444,12 +451,12 @@ fn draw_input(f: &mut Frame, area: Rect, app: &App) {
     
     f.render_widget(input, area);
     
-    // Set cursor position
+    // Set cursor position based on actual cursor positions
     let cursor_x = match app.mode {
-        AppMode::Search => app.search_buffer.len(),
-        AppMode::EditTodo => app.edit_buffer.len(),
-        AppMode::EditNotes => app.notes_buffer.len(),
-        _ => app.input_buffer.len(),
+        AppMode::Search => app.search_cursor_pos,
+        AppMode::EditTodo => app.edit_cursor_pos,
+        AppMode::EditNotes => app.notes_cursor_pos,
+        _ => app.input_cursor_pos,
     };
     
     f.set_cursor_position((
@@ -531,8 +538,9 @@ fn draw_help(f: &mut Frame, app: &App) {
         Line::from("  due:2024-12-25, due:12/25/2024, due:Dec 25"),
         Line::from("  due:eod (end of day), due:noon"),
         Line::from(""),
-        Line::from(vec![Span::styled("Workspaces:", Style::default().fg(colors.blue).add_modifier(Modifier::BOLD))]),
+        Line::from(vec![Span::styled("Workspaces & Navigation:", Style::default().fg(colors.blue).add_modifier(Modifier::BOLD))]),
         Line::from("  w       - Switch workspace (popup selection)"),
+        Line::from("  Ctrl+H  - Return to welcome screen from any workspace"),
         Line::from("  In workspace selection popup:"),
         Line::from("    n     - Create new workspace"),
         Line::from("    d     - Delete selected workspace"),
@@ -562,6 +570,131 @@ fn draw_help(f: &mut Frame, app: &App) {
     let area = centered_rect(60, 80, f.area());
     f.render_widget(Clear, area);
     f.render_widget(help_widget, area);
+}
+
+fn draw_welcome_screen(f: &mut Frame, app: &App) {
+    let colors = &app.colors;
+    
+    // Create main layout
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(8),  // Header with logo
+            Constraint::Min(10),    // Options list
+            Constraint::Length(3),  // Footer with instructions
+        ])
+        .split(f.area());
+    
+    // Draw header with ASCII art logo
+    let logo_text = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  📎 ", Style::default().fg(colors.cyan).add_modifier(Modifier::BOLD)),
+            Span::styled("Welcome to ", Style::default().fg(colors.fg)),
+            Span::styled("Paperclip", Style::default().fg(colors.cyan).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("     A powerful terminal todo manager", Style::default().fg(colors.comment)),
+        ]),
+        Line::from(""),
+        if app.is_first_launch {
+            Line::from(vec![
+                Span::styled("     🎉 Thanks for trying Paperclip! Choose an option below:", Style::default().fg(colors.green)),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled("     👋 Welcome back! What would you like to do?", Style::default().fg(colors.blue)),
+            ])
+        },
+        Line::from(""),
+    ];
+    
+    let header = Paragraph::new(logo_text)
+        .style(Style::default().fg(colors.fg))
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(colors.blue))
+        );
+    
+    f.render_widget(header, chunks[0]);
+    
+    // Draw options list
+    let options = app.get_welcome_options();
+    let option_items: Vec<ListItem> = options.iter()
+        .enumerate()
+        .map(|(i, (title, description))| {
+            let is_selected = i == app.welcome_selected;
+            
+            let title_style = if is_selected {
+                Style::default().fg(colors.fg).bg(colors.bg_highlight).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(colors.fg)
+            };
+            
+            let description_style = if is_selected {
+                Style::default().fg(colors.comment).bg(colors.bg_highlight)
+            } else {
+                Style::default().fg(colors.comment)
+            };
+            
+            let lines = vec![
+                Line::from(vec![
+                    Span::styled(if is_selected { "► " } else { "  " }, title_style),
+                    Span::styled(*title, title_style),
+                ]),
+                Line::from(vec![
+                    Span::styled("    ", description_style),
+                    Span::styled(*description, description_style),
+                ]),
+                Line::from(""), // Empty line for spacing
+            ];
+            
+            ListItem::new(lines)
+        })
+        .collect();
+    
+    let options_list = List::new(option_items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(colors.purple))
+                .title(" Choose Your Path ")
+                .title_style(Style::default().fg(colors.purple).add_modifier(Modifier::BOLD))
+        )
+        .style(Style::default().fg(colors.fg));
+    
+    f.render_widget(options_list, chunks[1]);
+    
+    // Draw footer with instructions
+    let instructions = vec![
+        Line::from(vec![
+            Span::styled("Navigate: ", Style::default().fg(colors.comment)),
+            Span::styled("j/k ↓/↑", Style::default().fg(colors.blue).add_modifier(Modifier::BOLD)),
+            Span::styled("  Select: ", Style::default().fg(colors.comment)),
+            Span::styled("Enter", Style::default().fg(colors.green).add_modifier(Modifier::BOLD)),
+            Span::styled("  Help: ", Style::default().fg(colors.comment)),
+            Span::styled("?", Style::default().fg(colors.yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("  Quit: ", Style::default().fg(colors.comment)),
+            Span::styled("q", Style::default().fg(colors.red).add_modifier(Modifier::BOLD)),
+        ]),
+    ];
+    
+    let footer = Paragraph::new(instructions)
+        .style(Style::default().fg(colors.fg))
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(colors.green))
+        );
+    
+    f.render_widget(footer, chunks[2]);
 }
 
 fn draw_selection_popup(f: &mut Frame, app: &App) {
@@ -820,7 +953,7 @@ fn draw_notes_editor(f: &mut Frame, app: &App) {
     f.render_widget(instructions, chunks[2]);
     
     // Set cursor position in the notes area
-    // Calculate cursor position based on text content and wrapping
+    // Calculate cursor position based on actual cursor position in buffer
     let text_area = Rect {
         x: chunks[1].x + 1,
         y: chunks[1].y,
@@ -828,11 +961,12 @@ fn draw_notes_editor(f: &mut Frame, app: &App) {
         height: chunks[1].height,
     };
     
-    // For simplicity, put cursor at end of last line
-    let lines: Vec<&str> = app.notes_buffer.split('\n').collect();
-    let cursor_y = text_area.y + lines.len().saturating_sub(1) as u16;
-    let cursor_x = if let Some(last_line) = lines.last() {
-        text_area.x + last_line.len() as u16
+    // Calculate cursor position based on the current cursor position in buffer
+    let text_before_cursor = &app.notes_buffer[..app.notes_cursor_pos];
+    let lines_before_cursor: Vec<&str> = text_before_cursor.split('\n').collect();
+    let cursor_y = text_area.y + (lines_before_cursor.len().saturating_sub(1)) as u16;
+    let cursor_x = if let Some(current_line) = lines_before_cursor.last() {
+        text_area.x + current_line.len() as u16
     } else {
         text_area.x
     };
@@ -1048,11 +1182,28 @@ fn draw_workspace_selection_ui(f: &mut Frame, app: &mut App) {
     
     f.render_widget(mode_widget, mode_area);
     
-    // Draw workspace list
-    let workspace_items: Vec<ListItem> = app.available_workspaces.iter()
+    // Draw workspace list - add Home option first
+    let mut workspace_items: Vec<ListItem> = vec![];
+    
+    // Add Home option
+    let home_selected = 0 == app.popup_selected;
+    let home_style = if home_selected {
+        Style::default().fg(colors.fg).bg(colors.bg_highlight).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(colors.fg)
+    };
+    
+    let home_line = Line::from(vec![
+        Span::styled("  🏠 ", Style::default().fg(colors.cyan)),
+        Span::styled("← Return to Welcome Screen", home_style),
+    ]);
+    workspace_items.push(ListItem::new(home_line));
+    
+    // Add workspace options
+    let workspace_list_items: Vec<ListItem> = app.available_workspaces.iter()
         .enumerate()
         .map(|(i, workspace_name)| {
-            let is_selected = i == app.popup_selected;
+            let is_selected = (i + 1) == app.popup_selected; // +1 to account for Home option
             let style = if is_selected {
                 Style::default().fg(colors.fg).bg(colors.bg_highlight).add_modifier(Modifier::BOLD)
             } else {
@@ -1067,6 +1218,8 @@ fn draw_workspace_selection_ui(f: &mut Frame, app: &mut App) {
             ListItem::new(line)
         })
         .collect();
+    
+    workspace_items.extend(workspace_list_items);
     
     let workspace_list = List::new(workspace_items)
         .block(
@@ -1085,7 +1238,7 @@ fn draw_workspace_selection_ui(f: &mut Frame, app: &mut App) {
     f.render_stateful_widget(workspace_list, chunks[1], &mut list_state);
     
     // Draw instructions
-    let instructions = Paragraph::new("Enter: Select Workspace | n: New Workspace | d: Delete | Esc: Exit | j/k: Navigate")
+    let instructions = Paragraph::new("Enter: Select | n: New Workspace | d: Delete Workspace | Ctrl+H: Home | Esc: Exit | j/k: Navigate")
         .style(Style::default().fg(colors.comment))
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true })
