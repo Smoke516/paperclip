@@ -118,10 +118,11 @@ source ~/.zshrc
    paperclip
    ```
 
-2. **First time setup:**
-   - App starts in workspace selection mode
-   - Press `Enter` to select the default "Personal" workspace
-   - Or press `n` to create a new workspace
+2. **Getting started:**
+   - App always starts with the welcome screen
+   - **New users:** Choose "🚀 Get Started" to create your first todo
+   - **Existing users:** Choose "📂 Browse Workspaces" to select a workspace
+   - Or explore other options like "⚡ Quick Demo" or "❓ Learn the Basics"
 
 3. **Add your first todo:**
    - Press `i` to enter insert mode
@@ -132,7 +133,8 @@ source ~/.zshrc
    - Use `j/k` or arrow keys to navigate
    - Press `Space` to mark todos complete
    - Press `a` to add subtasks
-   - Press `?` for full help
+   - Press `Ctrl+H` to return to welcome screen anytime
+   - Press `?` for comprehensive help with all keybindings
 
 ## Usage
 
@@ -149,14 +151,21 @@ source ~/.zshrc
 | `g/G` | Go to top/bottom |
 | `Enter` | Expand/collapse todo |
 
-### Workspaces
+### Workspaces & Navigation
 | Key | Action |
 |-----|--------|
 | `w` | Open workspace selection |
+| `Ctrl+H` | Return to welcome screen from anywhere |
 | `n` | Create new workspace (in workspace selection) |
 | `d` | Delete workspace (in workspace selection) |
 | `Enter` | Select workspace (in workspace selection) |
 | `Esc` | Cancel workspace selection |
+
+**Navigation Features:**
+- 🏠 **Always starts with welcome screen** - Central hub for all users
+- 🧭 **Multiple paths home** - `Ctrl+H` shortcut or Home option in workspace selector
+- 📊 **Enhanced status bar** - Shows navigation hints: `w: Workspaces | Ctrl+H: Home | ?: Help`
+- 🎯 **Context-aware welcome** - Different options for new vs existing users
 
 ### Search and Filtering
 | Key | Action |
